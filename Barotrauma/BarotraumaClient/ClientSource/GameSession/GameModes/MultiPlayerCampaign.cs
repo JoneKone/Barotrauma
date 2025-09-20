@@ -536,9 +536,16 @@ namespace Barotrauma
             UInt16 saveID       = msg.ReadUInt16();
             string mapSeed      = msg.ReadString();
 
+            if (GameMain.Client == null)
+            {
+                SkipCampaignUpdate(msg, requiredFlags);
+                return;
+            }
+
             bool refreshCampaignUI = false;
 
-            if (GameMain.GameSession?.GameMode is not MultiPlayerCampaign campaign || campaignID != campaign.CampaignID)
+            MultiPlayerCampaign campaign;
+            if (GameMain.GameSession?.GameMode is not MultiPlayerCampaign existingCampaign || campaignID != existingCampaign.CampaignID)
             {
                 string savePath = SaveUtil.CreateSavePath(SaveUtil.SaveType.Multiplayer);
 
@@ -546,6 +553,10 @@ namespace Barotrauma
                 campaign = (MultiPlayerCampaign)GameMain.GameSession.GameMode;
                 campaign.CampaignID = campaignID;
                 GameMain.NetLobbyScreen.ToggleCampaignMode(true);
+            }
+            else
+            {
+                campaign = existingCampaign;
             }
 
             //server has a newer save file
@@ -873,7 +884,7 @@ namespace Barotrauma
             {
                 campaign?.CampaignUI?.UpgradeStore?.RequestRefresh();
             }
-            campaign.SuppressStateSending = false;            
+            campaign.SuppressStateSending = false;
 
             bool ShouldApply(NetFlags flag, UInt16 id, bool requireUpToDateSave, bool requireCorrectRoundId = true)
             {
@@ -922,6 +933,165 @@ namespace Barotrauma
                 }
             }
 
+        }
+
+        private static void SkipCampaignUpdate(IReadMessage msg, NetFlags requiredFlags)
+        {
+            static void SkipStores(IReadMessage msg)
+            {
+                if (!msg.ReadBoolean()) { return; }
+
+                byte storeCount = msg.ReadByte();
+                for (int i = 0; i < storeCount; i++)
+                {
+                    msg.ReadIdentifier();
+                    msg.ReadUInt16();
+                }
+            }
+
+            static void SkipPurchasedItems(IReadMessage msg)
+            {
+                byte storeCount = msg.ReadByte();
+                for (int i = 0; i < storeCount; i++)
+                {
+                    msg.ReadIdentifier();
+                    UInt16 itemCount = msg.ReadUInt16();
+                    for (int j = 0; j < itemCount; j++)
+                    {
+                        msg.ReadIdentifier();
+                        msg.ReadBoolean();
+                        msg.ReadRangedInteger(0, CargoManager.MaxQuantity);
+                    }
+                }
+            }
+
+            static void SkipSoldItems(IReadMessage msg)
+            {
+                byte storeCount = msg.ReadByte();
+                for (int i = 0; i < storeCount; i++)
+                {
+                    msg.ReadIdentifier();
+                    UInt16 itemCount = msg.ReadUInt16();
+                    for (int j = 0; j < itemCount; j++)
+                    {
+                        msg.ReadIdentifier();
+                        msg.ReadUInt16();
+                        msg.ReadBoolean();
+                        msg.ReadByte();
+                        msg.ReadByte();
+                    }
+                }
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.Misc))
+            {
+                msg.ReadUInt16();
+                msg.ReadBoolean();
+                msg.ReadBoolean();
+                msg.ReadBoolean();
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.MapAndMissions))
+            {
+                msg.ReadUInt16();
+                msg.ReadBoolean();
+                msg.ReadBoolean();
+                msg.ReadUInt16();
+                msg.ReadUInt16();
+
+                byte missionCount = msg.ReadByte();
+                for (int i = 0; i < missionCount; i++)
+                {
+                    msg.ReadIdentifier();
+                    msg.ReadByte();
+                }
+
+                byte selectedMissionCount = msg.ReadByte();
+                for (int i = 0; i < selectedMissionCount; i++)
+                {
+                    msg.ReadByte();
+                }
+
+                SkipStores(msg);
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.SubList))
+            {
+                msg.ReadUInt16();
+                ushort ownedSubCount = msg.ReadUInt16();
+                for (int i = 0; i < ownedSubCount; i++)
+                {
+                    msg.ReadUInt16();
+                }
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.UpgradeManager))
+            {
+                msg.ReadUInt16();
+                ushort pendingUpgradeCount = msg.ReadUInt16();
+                for (int i = 0; i < pendingUpgradeCount; i++)
+                {
+                    msg.ReadIdentifier();
+                    msg.ReadIdentifier();
+                    msg.ReadByte();
+                }
+
+                ushort purchasedItemSwapCount = msg.ReadUInt16();
+                for (int i = 0; i < purchasedItemSwapCount; i++)
+                {
+                    msg.ReadUInt16();
+                    msg.ReadIdentifier();
+                }
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.ItemsInBuyCrate))
+            {
+                msg.ReadUInt16();
+                SkipPurchasedItems(msg);
+                SkipStores(msg);
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.ItemsInSellFromSubCrate))
+            {
+                msg.ReadUInt16();
+                SkipPurchasedItems(msg);
+                SkipStores(msg);
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.PurchasedItems))
+            {
+                msg.ReadUInt16();
+                SkipPurchasedItems(msg);
+                SkipStores(msg);
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.SoldItems))
+            {
+                msg.ReadUInt16();
+                SkipSoldItems(msg);
+                SkipStores(msg);
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.Reputation))
+            {
+                msg.ReadUInt16();
+                byte factionsCount = msg.ReadByte();
+                for (int i = 0; i < factionsCount; i++)
+                {
+                    msg.ReadIdentifier();
+                    msg.ReadSingle();
+                }
+            }
+
+            if (requiredFlags.HasFlag(NetFlags.CharacterInfo))
+            {
+                msg.ReadUInt16();
+                bool hasCharacterData = msg.ReadBoolean();
+                if (hasCharacterData)
+                {
+                    CharacterInfo.ClientRead(CharacterPrefab.HumanSpeciesName, msg, requireJobPrefabFound: false);
+                }
+            }
         }
 
         public void ClientReadCrew(IReadMessage msg)
